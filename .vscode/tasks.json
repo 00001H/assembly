@@ -1,0 +1,29 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Compile",
+            "type": "shell",
+            "command": "make -j4",
+            "problemMatcher": "$gcc",
+            "presentation": {
+                "showReuseMessage": false,
+                "clear": true
+            },
+        },
+        {
+            "label": "Run",
+            "command": "test.exe",
+            "linux": {
+                "command": "${workspaceFolder}/test"
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "showReuseMessage": false,
+                "clear": true
+            },
+            "dependsOn": "Compile",
+            "group": "test"
+        }
+    ]
+}
