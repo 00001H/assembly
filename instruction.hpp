@@ -59,7 +59,7 @@ namespace x86{
         inline std::byte XMM = static_cast<std::byte>(ordinal);
     }
     class InstructionEncoding{
-        // 0000 0iII WWwd mpoo
+        // 0000 000i WWwd mpoo
         // 0: unused
         // i: presence of immediate
         // I: width of immediate
@@ -75,9 +75,8 @@ namespace x86{
         std::byte default_opr;
         std::byte _opcode[3]{0_b};
         public:
-            consteval InstructionEncoding(width w,std::optional<std::byte> prefix,std::initializer_list<std::byte> opcode,bool modrm,bool modrm_for_dst,bool sized_with_dst,std::byte opr,std::optional<width> imm) : _flags(
-                (static_cast<std::uint8_t>(imm.has_value()) << 9)
-               |(static_cast<std::uint8_t>(pack_width(imm.value_or(width::W8))) << 8)
+            consteval InstructionEncoding(width w,std::optional<std::byte> prefix,std::initializer_list<std::byte> opcode,bool modrm,bool modrm_for_dst,bool sized_with_dst,std::byte opr,bool imm) : _flags(
+                (static_cast<std::uint8_t>(imm) << 8)
                |(static_cast<std::uint8_t>(pack_width(w)) << 6)
                |(static_cast<std::uint8_t>(sized_with_dst) << 5)
                |(static_cast<std::uint8_t>(modrm_for_dst) << 4)
@@ -94,10 +93,7 @@ namespace x86{
                 return _flags & 0b0010'0000;
             }
             bool has_immediate() const{
-                return _flags & 0b0100'0000'0000;
-            }
-            width immediate_size() const{
-                return unpack_width(static_cast<std::byte>((_flags & 0b0011'0000'0000) >> 8));
+                return _flags & 0b0001'0000'0000;
             }
             bool has_modrm() const{
                 return _flags & 0b1000;
@@ -132,15 +128,19 @@ namespace x86{
         // p: number of prefixes
         const InstructionEncoding* ienc;
         std::uint8_t _flags{0};
-        std::byte _lpref[4]{0_b,0_b,0_b,0_b};
+        std::byte _lpref[4];
         width opwidth;
         std::byte _modrm{0_b};
-        std::byte _sib{0_b};
-        std::byte _disp[4]{0_b,0_b,0_b,0_b};
-        std::byte _imm[4]{0_b,0_b,0_b,0_b};
+        std::byte _sib;
+        std::byte _disp[4];
+        std::byte _imm[4];
         public:
+            Instruction() : ienc(nullptr){}
             Instruction(const InstructionEncoding& enc) : ienc(&enc){
                 rm_reg(enc.default_op_r());
+            }
+            void reset(const InstructionEncoding& enc){
+                ienc = &enc;
             }
             const InstructionEncoding& encoding() const{
                 return *ienc;
@@ -149,7 +149,7 @@ namespace x86{
                 _flags = 0;
                 std::ranges::fill(_lpref,0_b);
             }
-            void prefix(std::byte pref,std::uint8_t grp){
+            void prefix(std::byte pref){
                 _lpref[_flags&0b11] = pref;
                 ++_flags; // can't carry into the third bit unless there are 5 prefixes, which can't happen
             }
@@ -202,14 +202,17 @@ namespace x86{
                     buf.append(_sib);
                 }
                 buf.append(std::span<const std::byte>(_disp,width_to_bit_count(unpack_width(static_cast<std::byte>(_flags>>4)))));
-                buf.append(std::span<const std::byte>(_imm,width_to_bit_count(ienc->immediate_size())));
+                if(ienc->has_immediate()){
+                    buf.append(std::span<const std::byte>(_imm,width_to_bit_count(
+                        opwidth==width::W64?width::W32:opwidth
+                    )));
+                }
             }
     };
     namespace encode{
         namespace detail{
             template<std::byte base>
             struct ins{
-                // (width w,std::optional<std::byte> prefix,std::initializer_list<std::byte> opcode,bool modrm,bool modrm_for_dst,bool sized_with_dst,std::byte opr,std::optional<width> imm)
                 constexpr static InstructionEncoding rm_r{
                     width::W32,
                     std::nullopt,
@@ -218,7 +221,7 @@ namespace x86{
                     true,
                     true,
                     0_b,
-                    std::nullopt
+                    false
                 };
                 constexpr static InstructionEncoding rm_r_8{
                     width::W8,
@@ -228,7 +231,7 @@ namespace x86{
                     true,
                     true,
                     0_b,
-                    std::nullopt
+                    false
                 };
                 constexpr static InstructionEncoding r_rm{
                     width::W32,
@@ -238,9 +241,9 @@ namespace x86{
                     false,
                     true,
                     0_b,
-                    std::nullopt
+                    false
                 };
-                constexpr static InstructionEncoding rm_r_8{
+                constexpr static InstructionEncoding r_rm_8{
                     width::W8,
                     std::nullopt,
                     {static_cast<std::byte>(static_cast<std::uint8_t>(base)+2)},
@@ -248,7 +251,7 @@ namespace x86{
                     false,
                     true,
                     0_b,
-                    std::nullopt
+                    false
                 };
             };
             template<std::byte base,std::byte opr>
@@ -261,7 +264,7 @@ namespace x86{
                     true,
                     true,
                     opr,
-                    std::nullopt
+                    true
                 };
                 constexpr static InstructionEncoding rm_imm_8{
                     width::W8,
@@ -271,7 +274,7 @@ namespace x86{
                     true,
                     true,
                     opr,
-                    std::nullopt
+                    true
                 };
             };
         }
