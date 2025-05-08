@@ -141,6 +141,7 @@ namespace x86{
             }
             void reset(const InstructionEncoding& enc){
                 ienc = &enc;
+                rm_reg(enc.default_op_r());
             }
             const InstructionEncoding& encoding() const{
                 return *ienc;
