@@ -87,6 +87,12 @@ namespace x86{
             ), prefix(prefix.value_or(0_b)), default_opr(opr){
                 std::ranges::copy(opcode,_opcode);
             }
+            bool modrm_is_dst() const{
+                return _flags & 0b0001'0000;
+            }
+            bool dst_size_as_width() const{
+                return _flags & 0b0010'0000;
+            }
             bool has_immediate() const{
                 return _flags & 0b0100'0000'0000;
             }
