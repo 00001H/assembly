@@ -201,7 +201,7 @@ namespace x86{
                 if(_flags&0b100){
                     buf.append(_sib);
                 }
-                buf.append(std::span<const std::byte>(_disp,width_to_byte_count(unpack_width(static_cast<std::byte>(_flags>>4)))));
+                buf.append(std::span<const std::byte>(_disp,1<<(_flags>>4)>>1));
                 if(ienc->has_immediate()){
                     buf.append(std::span<const std::byte>(_imm,width_to_byte_count(
                         opwidth==width::W64?width::W32:opwidth
