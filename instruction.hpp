@@ -3,6 +3,7 @@
 #include<cppp/bytearray.hpp>
 #include<type_traits>
 #include<algorithm>
+#include<stdexcept>
 #include<cstdint>
 namespace x86{
     using namespace asm_generic;
