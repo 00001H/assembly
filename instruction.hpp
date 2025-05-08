@@ -11,8 +11,8 @@ namespace x86{
         BYTE = 0, WORD = 1, DWORD = 2, QWORD = 3,
         W8 = 0, W16 = 1, W32 = 2, W64 = 3
     };
-    constexpr inline std::uint32_t width_to_bit_count(width w){
-        return w==width::W8?8:w==width::W16?16:w==width::W32?32:64;
+    constexpr inline std::uint32_t width_to_byte_count(width w){
+        return w==width::W8?1:w==width::W16?2:w==width::W32?4:8;
     }
     constexpr inline std::byte pack_width(width w){
         return w==width::W8?0_b:w==width::W16?1_b:w==width::W32?2_b:3_b;
@@ -201,9 +201,9 @@ namespace x86{
                 if(_flags&0b100){
                     buf.append(_sib);
                 }
-                buf.append(std::span<const std::byte>(_disp,width_to_bit_count(unpack_width(static_cast<std::byte>(_flags>>4)))));
+                buf.append(std::span<const std::byte>(_disp,width_to_byte_count(unpack_width(static_cast<std::byte>(_flags>>4)))));
                 if(ienc->has_immediate()){
-                    buf.append(std::span<const std::byte>(_imm,width_to_bit_count(
+                    buf.append(std::span<const std::byte>(_imm,width_to_byte_count(
                         opwidth==width::W64?width::W32:opwidth
                     )));
                 }
