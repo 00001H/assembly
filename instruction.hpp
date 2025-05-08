@@ -2,16 +2,25 @@
 #include"common.hpp"
 #include<cppp/bytearray.hpp>
 #include<type_traits>
-#include<utility>
+#include<algorithm>
 #include<cstdint>
-#include<bit>
 namespace x86{
     using namespace asm_generic;
     using cppp::bytes;
     enum class width{
-        BYTE = 8, WORD = 16, DWORD = 32, QWORD = 64,
-        W8 = 8, W16 = 16, W32 = 32, W64 = 64
+        BYTE = 0, WORD = 1, DWORD = 2, QWORD = 3,
+        W8 = 0, W16 = 1, W32 = 2, W64 = 3
     };
+    constexpr inline std::uint32_t width_to_bit_count(width w){
+        return w==width::W8?8:w==width::W16?16:w==width::W32?32:64;
+    }
+    constexpr inline std::byte pack_width(width w){
+        return w==width::W8?0_b:w==width::W16?1_b:w==width::W32?2_b:3_b;
+    }
+    constexpr inline width unpack_width(std::byte b){
+        [[assume(b==0_b||b==1_b||b==2_b||b==3_b)]];
+        return b==0_b?width::W8:b==1_b?width::W16:b==2_b?width::W32:width::W64;
+    }
     enum class scale : std::uint8_t{
         S1 = 0, S2 = 1, S4 = 2, S8 = 3
     };
@@ -33,14 +42,7 @@ namespace x86{
             wvx<w>
         >;
     }
-    namespace rex{
-        constexpr inline std::byte REX = 0b01000000_b;
-        constexpr inline std::byte W = 0b00001000_b;
-        constexpr inline std::byte R = 0b00000100_b;
-        constexpr inline std::byte X = 0b00000010_b;
-        constexpr inline std::byte B = 0b00000001_b;
-    }
-    namespace regv{
+    namespace reg{
         constexpr inline std::byte A = 0_b;
         constexpr inline std::byte C = 1_b;
         constexpr inline std::byte D = 2_b;
@@ -56,189 +58,253 @@ namespace x86{
         template<std::uint32_t ordinal> requires(ordinal < 8)
         inline std::byte XMM = static_cast<std::byte>(ordinal);
     }
-    class Reg{
-        std::byte _value;
+    class InstructionEncoding{
+        // 0000 0iII WWwd mpoo
+        // 0: unused
+        // i: presence of immediate
+        // I: width of immediate
+        // W: default width (0 = 8, 1 = 16, 2 = 32, 3 = 64)
+        // w: instruction width follows destination value
+        // d: ModR/M byte denotes destination value
+        // m: presence of ModR/M byte
+        // p: whether there is a mandatory prefix
+        // o: length of opcode
+        // 1-4: group 1-4 prefixes
+        std::uint16_t _flags;
+        std::byte prefix;
+        std::byte default_opr;
+        std::byte _opcode[3]{0_b};
         public:
-            constexpr explicit Reg(std::byte value) : _value(value){}
-            constexpr std::byte value() const{
-                return _value;
+            consteval InstructionEncoding(width w,std::optional<std::byte> prefix,std::initializer_list<std::byte> opcode,bool modrm,bool modrm_for_dst,bool sized_with_dst,std::byte opr,std::optional<width> imm) : _flags(
+                (static_cast<std::uint8_t>(imm.has_value()) << 9)
+               |(static_cast<std::uint8_t>(pack_width(imm.value_or(width::W8))) << 8)
+               |(static_cast<std::uint8_t>(pack_width(w)) << 6)
+               |(static_cast<std::uint8_t>(sized_with_dst) << 5)
+               |(static_cast<std::uint8_t>(modrm_for_dst) << 4)
+               |(static_cast<std::uint8_t>(modrm) << 3)
+               |(static_cast<std::uint8_t>(prefix.has_value()) << 2)
+               |(static_cast<std::uint8_t>(opcode.size()))
+            ), prefix(prefix.value_or(0_b)), default_opr(opr){
+                std::ranges::copy(opcode,_opcode);
+            }
+            bool has_immediate() const{
+                return _flags & 0b0100'0000'0000;
+            }
+            width immediate_size() const{
+                return unpack_width(static_cast<std::byte>((_flags & 0b0011'0000'0000) >> 8));
+            }
+            bool has_modrm() const{
+                return _flags & 0b1000;
+            }
+            std::byte default_op_r() const{
+                return default_opr;
+            }
+            void encode_mandatory_prefix(bytes& buf) const{
+                if(_flags&0b100){
+                    buf.append(prefix);
+                }
+            }
+            void encode_opcode(bytes& buf,width opw) const{
+                width native_width{unpack_width(static_cast<std::byte>(_flags)>>6)};
+                if((native_width==width::W8) != (opw==width::W8)){
+                    throw std::logic_error("encode_opcode: Trying to encode a wide operand with a 8-bit instruction, or vice versa");
+                }else if(opw==width::W64){
+                    buf.append(0b01001000_b); // REX.W
+                }else if(native_width==width::W64&&opw==width::W32){ // e.g. dword PUSH/POP on 64-bit
+                    throw std::logic_error("encode_opcode: Operation does not support 32-bit operands");
+                }else if(opw!=native_width){
+                    buf.append(0x66_b);
+                }
+                buf.append(std::span<const std::byte>(_opcode,_flags&3));
             }
     };
-    namespace reg{
-        constexpr inline Reg A{regv::A};
-        constexpr inline Reg C{regv::C};
-        constexpr inline Reg D{regv::D};
-        constexpr inline Reg B{regv::B};
-        constexpr inline Reg SP{regv::SP};
-        constexpr inline Reg BP{regv::BP};
-        constexpr inline Reg SI{regv::SI};
-        constexpr inline Reg DI{regv::DI};
-    }
-    class RM{
-        std::byte pat;
-        constexpr RM(std::byte pat) : pat(pat){}
+    class Instruction{
+        // 00dd rspp
+        // d: size of displacement
+        // s: presence of SIB byte
+        // r: presence of REX prefix // TODO
+        // p: number of prefixes
+        const InstructionEncoding* ienc;
+        std::uint8_t _flags{0};
+        std::byte _lpref[4]{0_b,0_b,0_b,0_b};
+        width opwidth;
+        std::byte _modrm{0_b};
+        std::byte _sib{0_b};
+        std::byte _disp[4]{0_b,0_b,0_b,0_b};
+        std::byte _imm[4]{0_b,0_b,0_b,0_b};
         public:
-            constexpr RM(Reg r) : pat(r.value()){}
-            constexpr static RM reg(std::byte reg){
-                return {0b1100'0000_b | reg};
+            Instruction(const InstructionEncoding& enc) : ienc(&enc){
+                rm_reg(enc.default_op_r());
             }
-            // not SP or BP
-            constexpr static RM mem(std::byte reg){
-                return {reg};
+            const InstructionEncoding& encoding() const{
+                return *ienc;
             }
-            constexpr std::byte encode(std::byte reg) const{
-                return pat | (reg << 3);
+            void reset(){
+                _flags = 0;
+                std::ranges::fill(_lpref,0_b);
             }
-    };
-    template<width disp> requires(disp == width::W8 || disp == width::W32)
-    class DisplacementRM{
-        std::byte pat;
-        public:
-            constexpr DisplacementRM(Reg rmreg) : pat((disp == width::W8 ? 0b0100'0000_b : 0b1000'0000_b) | rmreg.value()){}
-            constexpr std::byte encode(std::byte reg){
-                return pat | (reg << 3);
+            void prefix(std::byte pref,std::uint8_t grp){
+                _lpref[_flags&0b11] = pref;
+                ++_flags; // can't carry into the third bit unless there are 5 prefixes, which can't happen
             }
-    };
-    class SIB{
-        std::byte pat;
-        constexpr SIB(std::byte pat) : pat(pat){}
-        public:
-            constexpr static SIB b(std::byte base){
-                return {0b0010'0000_b | base};
+            void set_width(width wd){
+                opwidth = wd;
             }
-            template<scale scl>
-            constexpr static SIB sib(std::byte base,std::byte index){
-                return {static_cast<std::byte>(scl) | (index << 3) | base};
+            void mod_rm(std::byte mod,std::byte rm){
+                _modrm |= (mod << 6) | rm;
             }
-            constexpr std::byte encode() const{
-                return pat;
+            void rm_reg(std::byte reg){
+                _modrm |= reg << 3;
             }
-    };
-    template<width disw,bool rel_bp> requires((disw == width::W8 && !rel_bp) || disw == width::W32)
-    class DisplacementSIB{
-        std::byte pat;
-        constexpr DisplacementSIB(std::byte pat) : pat(pat){}
-        public:
-            constexpr static DisplacementSIB disp(){
-                return {(disw == width::W8 ? 0b0110'0101_b : (rel_bp ? 0b1010'0101_b : 0b0010'0101_b))};
+            void displacement(std::uint8_t u8){
+                _flags |= (1 << 12);
+                _disp[0] = static_cast<std::byte>(u8);
             }
-            template<scale scl>
-            constexpr static DisplacementSIB sid(std::byte index){
-                return {(disw == width::W8 ? 0b0100'0101_b : (rel_bp ? 0b1000'0101_b : 0b0000'0101_b)) | (index << 3)};
+            void displacement(std::uint16_t u16){
+                _flags |= (2 << 12);
+                _disp[0] = static_cast<std::byte>(u16);
+                _disp[1] = static_cast<std::byte>(u16>>8);
             }
-            constexpr std::byte encode() const{
-                return pat;
+            void displacement(std::uint32_t u32){
+                _flags |= (3 << 12);
+                _disp[0] = static_cast<std::byte>(u32);
+                _disp[1] = static_cast<std::byte>(u32>>8);
+                _disp[2] = static_cast<std::byte>(u32>>16);
+                _disp[3] = static_cast<std::byte>(u32>>24);
+            }
+            void immediate(std::uint8_t u8){
+                _imm[0] = static_cast<std::byte>(u8);
+            }
+            void immediate(std::uint16_t u16){
+                _imm[0] = static_cast<std::byte>(u16);
+                _imm[1] = static_cast<std::byte>(u16>>8);
+            }
+            void immediate(std::uint32_t u32){
+                _imm[0] = static_cast<std::byte>(u32);
+                _imm[1] = static_cast<std::byte>(u32>>8);
+                _imm[2] = static_cast<std::byte>(u32>>16);
+                _imm[3] = static_cast<std::byte>(u32>>24);
+            }
+            void encode(bytes& buf) const{
+                buf.append(std::span<const std::byte>(_lpref,_flags&0b11));
+                ienc->encode_mandatory_prefix(buf);
+                ienc->encode_opcode(buf,opwidth);
+                if(ienc->has_modrm()){
+                    buf.append(_modrm);
+                }
+                if(_flags&0b100){
+                    buf.append(_sib);
+                }
+                buf.append(std::span<const std::byte>(_disp,width_to_bit_count(unpack_width(static_cast<std::byte>(_flags>>4)))));
+                buf.append(std::span<const std::byte>(_imm,width_to_bit_count(ienc->immediate_size())));
             }
     };
     namespace encode{
-        namespace _detail{
-            template<std::byte basec,width w>
-            void e_op_rm(bytes& buf,std::byte rmpat){
-                if constexpr(w == width::W64){
-                    buf.append(rex::REX | rex::W);
-                }
-                if constexpr(w == width::W8){
-                    buf.append(basec);
-                }else{
-                    buf.append(static_cast<std::byte>(static_cast<std::uint8_t>(basec)+1));
-                }
-                buf.append(rmpat);
-            }
-            template<std::byte basec,std::byte reg>
-            struct i_rm{
-                template<width w>
-                static void rm(bytes& buf,RM rm){
-                    e_op_rm<basec,w>(buf,rm.encode(reg));
-                }
-                template<width w,width disw>
-                static void rm(bytes& buf,DisplacementRM<disw> rm,wv<disw> disp){
-                    e_op_rm<basec,w>(buf,rm.encode(reg));
-                    buf.appendl(disp);
-                }
-                template<width w>
-                static void rm(bytes& buf,SIB sib){
-                    e_op_rm<basec,w>(buf,RM::mem(0b100_b).encode(reg));
-                }
-                template<width w,width disw>
-                static void rm(bytes& buf,SIB sib,wv<disw> disp){
-                    e_op_rm<basec,w>(buf,DisplacementRM<disw>(0b100_b).encode(reg));
-                    buf.append(sib.encode());
-                }
+        namespace detail{
+            template<std::byte base>
+            struct ins{
+                // (width w,std::optional<std::byte> prefix,std::initializer_list<std::byte> opcode,bool modrm,bool modrm_for_dst,bool sized_with_dst,std::byte opr,std::optional<width> imm)
+                constexpr static InstructionEncoding rm_r{
+                    width::W32,
+                    std::nullopt,
+                    {static_cast<std::byte>(static_cast<std::uint8_t>(base)+1)},
+                    true,
+                    true,
+                    true,
+                    0_b,
+                    std::nullopt
+                };
+                constexpr static InstructionEncoding rm_r_8{
+                    width::W8,
+                    std::nullopt,
+                    {base},
+                    true,
+                    true,
+                    true,
+                    0_b,
+                    std::nullopt
+                };
+                constexpr static InstructionEncoding r_rm{
+                    width::W32,
+                    std::nullopt,
+                    {static_cast<std::byte>(static_cast<std::uint8_t>(base)+3)},
+                    true,
+                    false,
+                    true,
+                    0_b,
+                    std::nullopt
+                };
+                constexpr static InstructionEncoding rm_r_8{
+                    width::W8,
+                    std::nullopt,
+                    {static_cast<std::byte>(static_cast<std::uint8_t>(base)+2)},
+                    true,
+                    false,
+                    true,
+                    0_b,
+                    std::nullopt
+                };
             };
-            template<std::byte basec,std::byte reg>
-            struct i_rm_imm{
-                template<width w>
-                static void rm_imm(bytes& buf,RM rm,wvx<w> imm){
-                    i_rm<basec,reg>::template rm<w>(buf,rm);
-                    buf.appendl(imm);
-                }
-                template<width w,width disw>
-                static void rm_imm(bytes& buf,DisplacementRM<disw> rm,wvx<w> imm,wv<disw> disp){
-                    i_rm<basec,reg>::template rm<w>(buf,rm,disp);
-                    buf.appendl(imm);
-                }
-                template<width w>
-                static void rm_imm(bytes& buf,SIB sib,wvx<w> imm){
-                    i_rm<basec,reg>::template rm<w>(buf,sib);
-                    buf.appendl(imm);
-                }
-                template<width w,width disw,bool rel_bp>
-                static void rm_imm(bytes& buf,DisplacementSIB<disw,rel_bp> sib,wvx<w> imm,wv<disw> disp){
-                    i_rm<basec,reg>::template rm<w>(buf,sib,disp);
-                    buf.appendl(imm);
-                }
+            template<std::byte base,std::byte opr>
+            struct ins_imm{
+                constexpr static InstructionEncoding rm_imm{
+                    width::W32,
+                    std::nullopt,
+                    {static_cast<std::byte>(static_cast<std::uint8_t>(base)+1)},
+                    true,
+                    true,
+                    true,
+                    opr,
+                    std::nullopt
+                };
+                constexpr static InstructionEncoding rm_imm_8{
+                    width::W8,
+                    std::nullopt,
+                    {base},
+                    true,
+                    true,
+                    true,
+                    opr,
+                    std::nullopt
+                };
             };
-            template<std::byte basec>
-            struct i_rm_r{
-                template<width w>
-                static void rm_r(bytes& buf,RM rm,Reg reg){
-                    e_op_rm<basec,w>(buf,rm.encode(reg.value()));
+        }
+        struct sub : detail::ins<0x28_b>, detail::ins_imm<0x80_b,5_b>{};
+        struct mov : detail::ins<0x88_b>, detail::ins_imm<0xC6_b,0_b>{};
+        namespace detail{
+            template<std::byte rmop,std::byte rmreg,std::byte rop>
+            struct pushpop{
+                constexpr static InstructionEncoding rm{
+                    width::W64,
+                    std::nullopt,
+                    {rmop},
+                    true,
+                    true,
+                    true,
+                    rmreg,
+                    std::nullopt
+                };
+                constexpr static void r64(bytes& buf,std::byte r){
+                    buf.append(static_cast<std::byte>(static_cast<std::uint8_t>(rop)+static_cast<std::uint8_t>(r)));
                 }
-                template<width w,width disw>
-                static void rm_r(bytes& buf,DisplacementRM<disw> rm,wv<disw> disp,Reg reg){
-                    e_op_rm<basec,w>(buf,rm.encode(reg.value()));
-                    buf.appendl(disp);
-                }
-                template<width w>
-                static void rm_r(bytes& buf,SIB sib,Reg reg){
-                    e_op_rm<basec,w>(buf,RM::mem(0b100_b).encode(reg.value()));
-                }
-                template<width w,width disw>
-                static void rm_r(bytes& buf,SIB sib,wv<disw> disp,Reg reg){
-                    e_op_rm<basec,w>(buf,DisplacementRM<disw>(0b100_b).encode(reg.value()));
-                    buf.append(sib.encode());
-                }
-            };
-            template<std::byte basec>
-            struct i_r_rm{
-                template<width w>
-                static void r_rm(bytes& buf,Reg reg,RM rm){
-                    i_rm_r<basec>::template rm_r<w>(buf,rm,reg);
-                }
-                template<width w,width disw>
-                static void r_rm(bytes& buf,Reg reg,DisplacementRM<disw> rm,wv<disw> disp){
-                    i_rm_r<basec>::template rm_r<w,disw>(buf,rm,disp,reg);
-                }
-                template<width w>
-                static void r_rm(bytes& buf,Reg reg,SIB sib){
-                    i_rm_r<basec>::template rm_r<w>(buf,sib,reg);
-                }
-                template<width w,width disw>
-                static void r_rm(bytes& buf,Reg reg,SIB sib,wv<disw> disp){
-                    i_rm_r<basec>::template rm_r<w,disw>(buf,sib,disp,reg);
+                constexpr static void r16(bytes& buf,std::byte r){
+                    buf.append(0x66_b);
+                    buf.append(static_cast<std::byte>(static_cast<std::uint8_t>(rop)+static_cast<std::uint8_t>(r)));
                 }
             };
         }
-        struct sub : _detail::i_rm_imm<0x80_b,5_b>, _detail::i_rm_r<0x28_b>{};
-        struct add : _detail::i_rm_imm<0x80_b,0_b>, _detail::i_rm_r<0x02_b>{};
-        struct mov : _detail::i_rm_imm<0xC6_b,0_b>, _detail::i_rm_r<0x88_b>, _detail::i_r_rm<0x8A_b>{};
-        struct ret{
-            constexpr static void near(bytes& buf){
+        struct push : detail::pushpop<0xFF_b,6_b,0x50_b>{};
+        struct pop : detail::pushpop<0x8F_b,0_b,0x58_b>{};
+        namespace ret{
+            constexpr inline void near(bytes& buf){
                 buf.append(0xC3_b);
             }
-            constexpr static void far(bytes& buf){
+            constexpr inline void far(bytes& buf){
                 buf.append(0xCB_b);
             }
         };
+        constexpr inline void leave(bytes& buf){
+            buf.append(0xC9_b);
+        }
     }
 }
