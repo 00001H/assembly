@@ -306,11 +306,11 @@ namespace x86{
         }
         struct push : detail::pushpop<0xFF_b,6_b,0x50_b>{};
         struct pop : detail::pushpop<0x8F_b,0_b,0x58_b>{};
-        namespace ret{
-            constexpr inline void near(bytes& buf){
+        struct ret{
+            constexpr static void near(bytes& buf){
                 buf.append(0xC3_b);
             }
-            constexpr inline void far(bytes& buf){
+            constexpr static void far(bytes& buf){
                 buf.append(0xCB_b);
             }
         };
