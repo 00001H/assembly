@@ -306,6 +306,22 @@ namespace x86{
         }
         struct push : detail::pushpop<0xFF_b,6_b,0x50_b>{};
         struct pop : detail::pushpop<0x8F_b,0_b,0x58_b>{};
+        struct call{
+            constexpr static InstructionEncoding rm{
+                width::W64,
+                std::nullopt,
+                {0xFF_b},
+                true,
+                true,
+                false,
+                0x2_b,
+                false
+            };
+            constexpr static void rel32(bytes& buf,std::uint32_t rel){
+                buf.append(0xE8_b);
+                buf.append(rel);
+            }
+        };
         struct ret{
             constexpr static void near(bytes& buf){
                 buf.append(0xC3_b);
