@@ -135,6 +135,31 @@ namespace x86{
         std::byte _sib;
         std::byte _disp[4];
         std::byte _imm[4];
+        template<bool has_imm>
+        std::conditional_t<has_imm,std::uint64_t,void> _encode(bytes& buf) const{
+            buf.append(std::span<const std::byte>(_lpref,_flags&0b11));
+            ienc->encode_mandatory_prefix(buf);
+            ienc->encode_opcode(buf,opwidth);
+            if(ienc->has_modrm()){
+                buf.append(_modrm);
+            }
+            if(_flags&0b100){
+                buf.append(_sib);
+            }
+            buf.append(std::span<const std::byte>(_disp,1<<(_flags>>4)>>1));
+            if(ienc->has_immediate()){
+                std::uint64_t imm = buf.size();
+                buf.append(std::span<const std::byte>(_imm,width_to_byte_count(
+                    opwidth==width::W64?width::W32:opwidth
+                )));
+                if constexpr(has_imm){
+                    return imm;
+                }
+            }
+            if constexpr(has_imm){
+                std::unreachable();
+            }
+        }
         public:
             Instruction() : ienc(nullptr){}
             Instruction(const InstructionEncoding& enc) : ienc(&enc){
@@ -194,21 +219,10 @@ namespace x86{
                 _imm[3] = static_cast<std::byte>(u32>>24);
             }
             void encode(bytes& buf) const{
-                buf.append(std::span<const std::byte>(_lpref,_flags&0b11));
-                ienc->encode_mandatory_prefix(buf);
-                ienc->encode_opcode(buf,opwidth);
-                if(ienc->has_modrm()){
-                    buf.append(_modrm);
-                }
-                if(_flags&0b100){
-                    buf.append(_sib);
-                }
-                buf.append(std::span<const std::byte>(_disp,1<<(_flags>>4)>>1));
-                if(ienc->has_immediate()){
-                    buf.append(std::span<const std::byte>(_imm,width_to_byte_count(
-                        opwidth==width::W64?width::W32:opwidth
-                    )));
-                }
+                _encode<false>(buf);
+            }
+            std::uint64_t encode_with_sym(bytes& buf) const{
+                return _encode<true>(buf);
             }
     };
     namespace encode{
