@@ -293,7 +293,7 @@ namespace x86{
                     true,
                     true,
                     rmreg,
-                    std::nullopt
+                    false
                 };
                 constexpr static void r64(bytes& buf,std::byte r){
                     buf.append(static_cast<std::byte>(static_cast<std::uint8_t>(rop)+static_cast<std::uint8_t>(r)));
