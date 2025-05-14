@@ -135,8 +135,8 @@ namespace x86{
         std::byte _sib;
         std::byte _disp[4];
         std::byte _imm[4];
-        template<bool has_imm>
-        std::conditional_t<has_imm,std::uint64_t,void> _encode(bytes& buf) const{
+        template<bool ret_disp>
+        std::conditional_t<ret_disp,std::uint64_t,void> _encode(bytes& buf) const{
             buf.append(std::span<const std::byte>(_lpref,_flags&0b11));
             ienc->encode_mandatory_prefix(buf);
             ienc->encode_opcode(buf,opwidth);
@@ -146,18 +146,15 @@ namespace x86{
             if(_flags&0b100){
                 buf.append(_sib);
             }
-            buf.append(std::span<const std::byte>(_disp,1<<(_flags>>4)>>1));
+            std::uint64_t dbegin = buf.size();
+            buf.append(std::span<const std::byte>(_disp,1uz<<(_flags>>4uz)>>1uz));
             if(ienc->has_immediate()){
-                std::uint64_t imm = buf.size();
                 buf.append(std::span<const std::byte>(_imm,width_to_byte_count(
                     opwidth==width::W64?width::W32:opwidth
                 )));
-                if constexpr(has_imm){
-                    return imm;
-                }
             }
-            if constexpr(has_imm){
-                std::unreachable();
+            if constexpr(ret_disp){
+                return dbegin;
             }
         }
         public:
@@ -221,7 +218,7 @@ namespace x86{
             void encode(bytes& buf) const{
                 _encode<false>(buf);
             }
-            std::uint64_t encode_with_sym(bytes& buf) const{
+            std::uint64_t encode_and_return_disp(bytes& buf) const{
                 return _encode<true>(buf);
             }
     };
