@@ -173,6 +173,12 @@ namespace x86{
                 _flags = 0;
                 std::ranges::fill(_lpref,0_b);
             }
+            void sib(std::byte b){
+                _sib = b;
+            }
+            void sib(std::byte base,std::byte index,std::byte scale){
+                _sib = (scale << 6) | (index << 3) | base;
+            }
             void prefix(std::byte pref){
                 _lpref[_flags&0b11] = pref;
                 ++_flags; // can't carry into the third bit unless there are 5 prefixes, which can't happen
