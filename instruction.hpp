@@ -299,6 +299,16 @@ namespace x86{
         }
         struct sub : detail::ins<0x28_b>, detail::ins_imm<0x80_b,5_b>{};
         struct mov : detail::ins<0x88_b>, detail::ins_imm<0xC6_b,0_b>{};
+        constexpr inline InstructionEncoding lea{
+            width::W32,
+            std::nullopt,
+            {0x8D_b},
+            true,
+            false,
+            true,
+            0_b,
+            false
+        };
         namespace detail{
             template<std::byte rmop,std::byte rmreg,std::byte rop>
             struct pushpop{
