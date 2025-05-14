@@ -193,16 +193,16 @@ namespace x86{
                 _modrm |= reg << 3;
             }
             void displacement(std::uint8_t u8){
-                _flags |= (1 << 12);
+                _flags |= (1 << 4);
                 _disp[0] = static_cast<std::byte>(u8);
             }
             void displacement(std::uint16_t u16){
-                _flags |= (2 << 12);
+                _flags |= (2 << 4);
                 _disp[0] = static_cast<std::byte>(u16);
                 _disp[1] = static_cast<std::byte>(u16>>8);
             }
             void displacement(std::uint32_t u32){
-                _flags |= (3 << 12);
+                _flags |= (3 << 4);
                 _disp[0] = static_cast<std::byte>(u32);
                 _disp[1] = static_cast<std::byte>(u32>>8);
                 _disp[2] = static_cast<std::byte>(u32>>16);
