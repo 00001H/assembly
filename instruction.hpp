@@ -111,12 +111,10 @@ namespace x86{
                 width native_width{unpack_width(static_cast<std::byte>(_flags)>>6)};
                 if((native_width==width::W8) != (opw==width::W8)){
                     throw std::logic_error("encode_opcode: Trying to encode a wide operand with a 8-bit instruction, or vice versa");
-                }else if(opw==width::W64){
-                    buf.append(0b01001000_b); // REX.W
                 }else if(native_width==width::W64&&opw==width::W32){ // e.g. dword PUSH/POP on 64-bit
                     throw std::logic_error("encode_opcode: Operation does not support 32-bit operands");
                 }else if(opw!=native_width){
-                    buf.append(0x66_b);
+                    buf.append(opw==width::W64?0b01001000_b/*REX.W*/:0x66_b);
                 }
                 buf.append(std::span<const std::byte>(_opcode,_flags&3));
             }
