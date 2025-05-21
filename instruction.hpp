@@ -341,7 +341,7 @@ namespace x86{
                 {0xFF_b},
                 true,
                 true,
-                false,
+                true,
                 0x2_b,
                 false
             };
