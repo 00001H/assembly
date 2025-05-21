@@ -297,6 +297,7 @@ namespace x86{
                 };
             };
         }
+        struct add : detail::ins<0x00_b>, detail::ins_imm<0x80_b,0_b>{};
         struct sub : detail::ins<0x28_b>, detail::ins_imm<0x80_b,5_b>{};
         struct mov : detail::ins<0x88_b>, detail::ins_imm<0xC6_b,0_b>{};
         constexpr inline InstructionEncoding lea{
