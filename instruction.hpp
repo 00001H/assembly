@@ -345,7 +345,7 @@ namespace x86{
             };
             constexpr static void rel32(bytes& buf,std::uint32_t rel){
                 buf.append(0xE8_b);
-                buf.append(rel);
+                buf.appendl(rel);
             }
         };
         struct ret{
